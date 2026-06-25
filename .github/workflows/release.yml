@@ -1,0 +1,65 @@
+name: Build and Release
+
+# Запускается при пуше тега вида v1.0, v1.1 и т.д.
+# Либо вручную через вкладку Actions -> Run workflow (с указанием тега).
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Тег релиза (например v1.1)'
+        required: true
+
+permissions:
+  contents: write   # нужно, чтобы workflow мог создавать релизы
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ps2exe
+        shell: powershell
+        run: Install-Module ps2exe -Force -Scope CurrentUser
+
+      - name: Build StretchBreak.exe
+        shell: powershell
+        run: |
+          Invoke-ps2exe `
+            -inputFile StretchBreak.ps1 `
+            -outputFile StretchBreak.exe `
+            -noConsole -STA `
+            -iconFile StretchBreak.ico `
+            -title StretchBreak `
+            -product StretchBreak `
+            -description "Напоминание о разминке"
+
+      - name: Determine tag
+        id: tag
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # релиз уже есть — просто перезаливаем exe
+            gh release upload "$TAG" StretchBreak.exe --clobber
+          else
+            gh release create "$TAG" StretchBreak.exe \
+              --target main \
+              --title "StretchBreak $TAG" \
+              --generate-notes
+          fi
